@@ -408,7 +408,7 @@
         };
 
         const isDateColumn = (header) => {
-            return header.toLowerCase().includes('tanggal') || 
+            return header.toLowerCase().includes('tanggal') ||
                    header.toLowerCase().includes('date') ||
                    /bulan\s*\d+/i.test(header);
         };
@@ -436,487 +436,98 @@
             return result;
         };
 
-        const CashflowDashboard = () => {
-            const [selectedSheet, setSelectedSheet] = useState('');
-            const [searchTerm, setSearchTerm] = useState('');
-            const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
-            const [currentPage, setCurrentPage] = useState(1);
-            const [pageSize, setPageSize] = useState(25);
-            const [activeTab, setActiveTab] = useState('table');
-            const [groupBy, setGroupBy] = useState('');
-            const [aggregateFunction, setAggregateFunction] = useState('SUM');
-
-            // Convert data
-            const data = useMemo(() => convertToObjects(window.RAW_DATA), []);
-            const sheets = Object.keys(data);
-
-            useEffect(() => {
-                if (sheets.length > 0 && !selectedSheet) {
-                    setSelectedSheet(sheets[0]);
-                }
-            }, [sheets]);
-
-            const currentData = selectedSheet ? data[selectedSheet] || [] : [];
-            
-            // Search and filter
-            const filteredData = useMemo(() => {
-                if (!searchTerm) return currentData;
-                
-                return currentData.filter(row =>
-                    Object.values(row).some(value =>
-                        value && value.toString().toLowerCase().includes(searchTerm.toLowerCase())
-                    )
-                );
-            }, [currentData, searchTerm]);
-
-            // Sort
-            const sortedData = useMemo(() => {
-                if (!sortConfig.key) return filteredData;
-
-                return [...filteredData].sort((a, b) => {
-                    const aVal = a[sortConfig.key];
-                    const bVal = b[sortConfig.key];
-
-                    if (aVal === null || aVal === undefined) return 1;
-                    if (bVal === null || bVal === undefined) return -1;
-
-                    if (isNumericValue(aVal) && isNumericValue(bVal)) {
-                        return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
-                    }
-
-                    const aStr = aVal.toString().toLowerCase();
-                    const bStr = bVal.toString().toLowerCase();
-                    
-                    if (sortConfig.direction === 'asc') {
-                        return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
-                    } else {
-                        return aStr > bStr ? -1 : aStr < bStr ? 1 : 0;
-                    }
-                });
-            }, [filteredData, sortConfig]);
-
-            // Pagination
-            const paginatedData = useMemo(() => {
-                const start = (currentPage - 1) * pageSize;
-                return sortedData.slice(start, start + pageSize);
-            }, [sortedData, currentPage, pageSize]);
-
-            const totalPages = Math.ceil(sortedData.length / pageSize);
-
-            // KPI calculations
-            const kpis = useMemo(() => {
-                if (currentData.length === 0) return {};
-
-                const numericColumns = {};
-                
-                // Find numeric columns
-                Object.keys(currentData[0] || {}).forEach(key => {
-                    const values = currentData.map(row => row[key]).filter(val => isNumericValue(val));
-                    if (values.length > 0) {
-                        numericColumns[key] = {
-                            sum: values.reduce((sum, val) => sum + val, 0),
-                            avg: values.reduce((sum, val) => sum + val, 0) / values.length,
-                            min: Math.min(...values),
-                            max: Math.max(...values),
-                            count: values.length
-                        };
-                    }
-                });
-
-                return numericColumns;
-            }, [currentData]);
-
-            // Chart data
-            const chartData = useMemo(() => {
-                if (currentData.length === 0) return [];
-
-                const headers = Object.keys(currentData[0] || {});
-                const dateColumns = headers.filter(isDateColumn);
-                const numericColumns = headers.filter(header => 
-                    currentData.some(row => isNumericValue(row[header]))
-                );
-
-                if (dateColumns.length === 0 && numericColumns.length === 0) return [];
-
-                // Use first date column or first column as X-axis
-                const xColumn = dateColumns[0] || headers[0];
-                
-                return currentData.map(row => {
-                    const item = { name: row[xColumn] || 'N/A' };
-                    numericColumns.forEach(col => {
-                        if (isNumericValue(row[col])) {
-                            item[col] = row[col];
-                        }
-                    });
-                    return item;
-                }).filter(item => Object.keys(item).length > 1);
-            }, [currentData]);
-
-            // Group and aggregate
-            const groupedData = useMemo(() => {
-                if (!groupBy || currentData.length === 0) return [];
-
-                const groups = {};
-                currentData.forEach(row => {
-                    const groupValue = row[groupBy] || 'N/A';
-                    if (!groups[groupValue]) {
-                        groups[groupValue] = [];
-                    }
-                    groups[groupValue].push(row);
-                });
-
-                return Object.entries(groups).map(([groupValue, rows]) => {
-                    const result = { [groupBy]: groupValue, Count: rows.length };
-                    
-                    // Calculate aggregates for numeric columns
-                    Object.keys(rows[0] || {}).forEach(key => {
-                        if (key === groupBy) return;
-                        
-                        const numericValues = rows.map(row => row[key]).filter(val => isNumericValue(val));
-                        if (numericValues.length > 0) {
-                            switch (aggregateFunction) {
-                                case 'SUM':
-                                    result[key] = numericValues.reduce((sum, val) => sum + val, 0);
-                                    break;
-                                case 'AVG':
-                                    result[key] = numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
-                                    break;
-                                case 'MIN':
-                                    result[key] = Math.min(...numericValues);
-                                    break;
-                                case 'MAX':
-                                    result[key] = Math.max(...numericValues);
-                                    break;
-                            }
-                        }
-                    });
-                    
-                    return result;
-                });
-            }, [currentData, groupBy, aggregateFunction]);
-
-            const handleSort = (key) => {
-                setSortConfig({
-                    key,
-                    direction: sortConfig.key === key && sortConfig.direction === 'asc' ? 'desc' : 'asc'
-                });
-            };
-
-            const exportData = (format) => {
-                const dataToExport = activeTab === 'group' ? groupedData : sortedData;
-                
-                if (format === 'CSV') {
-                    if (dataToExport.length === 0) return;
-                    
-                    const headers = Object.keys(dataToExport[0]);
-                    const csv = [
-                        headers.join(','),
-                        ...dataToExport.map(row => 
-                            headers.map(header => {
-                                const value = row[header];
-                                if (value === null || value === undefined) return '';
-                                return `"${value.toString().replace(/"/g, '""')}"`;
-                            }).join(',')
-                        )
-                    ].join('\n');
-                    
-                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                    saveAs(blob, `${selectedSheet}_${format.toLowerCase()}.csv`);
-                } else if (format === 'JSON') {
-                    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { 
-                        type: 'application/json;charset=utf-8;' 
-                    });
-                    saveAs(blob, `${selectedSheet}_${format.toLowerCase()}.json`);
-                }
-            };
-
-            const headers = currentData.length > 0 ? Object.keys(currentData[0]) : [];
-            const numericHeaders = headers.filter(header => 
-                currentData.some(row => isNumericValue(row[header]))
-            );
+        const TestChart = () => {
+            const data = [
+                { name: 'Page A', uv: 4000, pv: 2400, amt: 2400 },
+                { name: 'Page B', uv: 3000, pv: 1398, amt: 2210 },
+                { name: 'Page C', uv: 2000, pv: 9800, amt: 2290 },
+                { name: 'Page D', uv: 2780, pv: 3908, amt: 2000 },
+                { name: 'Page E', uv: 1890, pv: 4800, amt: 2181 },
+                { name: 'Page F', uv: 2390, pv: 3800, amt: 2500 },
+                { name: 'Page G', uv: 3490, pv: 4300, amt: 2100 },
+            ];
 
             return (
-                <div className="container">
-                    <div className="header">
-                        <h1>Dashboard Cashflow DRONE AGRASS</h1>
-                        <p>Analisis Proyeksi Keuangan Drone Pupuk - Region Sumsel</p>
-                    </div>
-
-                    {/* Controls */}
-                    <div className="controls">
-                        <div className="controls-row">
-                            <div className="control-group">
-                                <label>Pilih Sheet:</label>
-                                <select 
-                                    value={selectedSheet} 
-                                    onChange={(e) => {
-                                        setSelectedSheet(e.target.value);
-                                        setCurrentPage(1);
-                                        setSearchTerm('');
-                                        setSortConfig({ key: null, direction: 'asc' });
-                                    }}
-                                >
-                                    {sheets.map(sheet => (
-                                        <option key={sheet} value={sheet}>{sheet}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            
-                            <div className="control-group">
-                                <label>Pencarian:</label>
-                                <input
-                                    type="text"
-                                    placeholder="Cari data..."
-                                    value={searchTerm}
-                                    onChange={(e) => {
-                                        setSearchTerm(e.target.value);
-                                        setCurrentPage(1);
-                                    }}
-                                />
-                            </div>
-                            
-                            <div className="control-group">
-                                <label>Rows per page:</label>
-                                <select 
-                                    value={pageSize} 
-                                    onChange={(e) => {
-                                        setPageSize(Number(e.target.value));
-                                        setCurrentPage(1);
-                                    }}
-                                >
-                                    <option value="10">10</option>
-                                    <option value="25">25</option>
-                                    <option value="50">50</option>
-                                    <option value="100">100</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="controls-row">
-                            <div className="control-group">
-                                <label>Group By:</label>
-                                <select 
-                                    value={groupBy} 
-                                    onChange={(e) => setGroupBy(e.target.value)}
-                                >
-                                    <option value="">-- Pilih Kolom --</option>
-                                    {headers.map(header => (
-                                        <option key={header} value={header}>{header}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            
-                            {groupBy && (
-                                <div className="control-group">
-                                    <label>Aggregate:</label>
-                                    <select 
-                                        value={aggregateFunction} 
-                                        onChange={(e) => setAggregateFunction(e.target.value)}
-                                    >
-                                        <option value="SUM">SUM</option>
-                                        <option value="AVG">AVG</option>
-                                        <option value="MIN">MIN</option>
-                                        <option value="MAX">MAX</option>
-                                    </select>
-                                </div>
-                            )}
-                            
-                            <div className="control-group">
-                                <label>Export:</label>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <button onClick={() => exportData('CSV')}>CSV</button>
-                                    <button onClick={() => exportData('JSON')}>JSON</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* KPI Stats */}
-                    {Object.keys(kpis).length > 0 && (
-                        <div className="stats">
-                            {Object.entries(kpis).slice(0, 4).map(([column, stats]) => (
-                                <div key={column} className="stat-card">
-                                    <div className="stat-title">{column} (Total)</div>
-                                    <div className="stat-value">{formatCurrency(stats.sum)}</div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Tabs */}
-                    <div className="tabs">
-                        <div 
-                            className={`tab ${activeTab === 'table' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('table')}
+                <div style={{ width: '100%', height: 300 }}>
+                    <ResponsiveContainer>
+                        <LineChart
+                            data={data}
+                            margin={{
+                                top: 5,
+                                right: 30,
+                                left: 20,
+                                bottom: 5,
+                            }}
                         >
-                            Tabel Data
-                        </div>
-                        <div 
-                            className={`tab ${activeTab === 'chart' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('chart')}
-                        >
-                            Grafik
-                        </div>
-                        {groupBy && (
-                            <div 
-                                className={`tab ${activeTab === 'group' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('group')}
-                            >
-                                Grup & Agregasi
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Content */}
-                    <div className="content">
-                        {activeTab === 'table' && (
-                            <>
-                                <div className="table-container">
-                                    <table>
-                                        <thead>
-                                            <tr>
-                                                {headers.map(header => (
-                                                    <th 
-                                                        key={header}
-                                                        onClick={() => handleSort(header)}
-                                                    >
-                                                        {header}
-                                                        {sortConfig.key === header && (
-                                                            <span className="sort-indicator">
-                                                                {sortConfig.direction === 'asc' ? '↑' : '↓'}
-                                                            </span>
-                                                        )}
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {paginatedData.map((row, index) => (
-                                                <tr key={index}>
-                                                    {headers.map(header => {
-                                                        const value = row[header];
-                                                        const isNumeric = isNumericValue(value);
-                                                        return (
-                                                            <td 
-                                                                key={header}
-                                                                className={isNumeric ? 'money' : ''}
-                                                            >
-                                                                {isNumeric ? formatNumber(value) : (value || '-')}
-                                                            </td>
-                                                        );
-                                                    })}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                
-                                <div className="pagination">
-                                    <div className="pagination-info">
-                                        Menampilkan {Math.min((currentPage - 1) * pageSize + 1, sortedData.length)} - {Math.min(currentPage * pageSize, sortedData.length)} dari {sortedData.length} data
-                                    </div>
-                                    <div className="pagination-controls">
-                                        <button 
-                                            onClick={() => setCurrentPage(1)}
-                                            disabled={currentPage === 1}
-                                        >
-                                            ⏮️
-                                        </button>
-                                        <button 
-                                            onClick={() => setCurrentPage(currentPage - 1)}
-                                            disabled={currentPage === 1}
-                                        >
-                                            ⬅️
-                                        </button>
-                                        <span>Page {currentPage} of {totalPages}</span>
-                                        <button 
-                                            onClick={() => setCurrentPage(currentPage + 1)}
-                                            disabled={currentPage === totalPages}
-                                        >
-                                            ➡️
-                                        </button>
-                                        <button 
-                                            onClick={() => setCurrentPage(totalPages)}
-                                            disabled={currentPage === totalPages}
-                                        >
-                                            ⏭️
-                                        </button>
-                                    </div>
-                                </div>
-                            </>
-                        )}
-
-                        {activeTab === 'chart' && (
-                            <div className="chart-container">
-                                {chartData.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <LineChart data={chartData}>
-                                            <CartesianGrid strokeDasharray="3 3" />
-                                            <XAxis dataKey="name" />
-                                            <YAxis />
-                                            <Tooltip formatter={(value) => formatNumber(value)} />
-                                            <Legend />
-                                            {numericHeaders.slice(0, 5).map((header, index) => {
-                                                const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
-                                                return (
-                                                    <Line 
-                                                        key={header}
-                                                        type="monotone" 
-                                                        dataKey={header} 
-                                                        stroke={colors[index % colors.length]}
-                                                        strokeWidth={2}
-                                                    />
-                                                );
-                                            })}
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                ) : (
-                                    <div className="loading">
-                                        Tidak ada data numerik untuk ditampilkan dalam grafik
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {activeTab === 'group' && groupBy && (
-                            <>
-                                <div className="group-controls">
-                                    <p><strong>Grouped by:</strong> {groupBy} | <strong>Aggregate:</strong> {aggregateFunction}</p>
-                                </div>
-                                <div className="table-container">
-                                    <table>
-                                        <thead>
-                                            <tr>
-                                                {groupedData.length > 0 && Object.keys(groupedData[0]).map(header => (
-                                                    <th key={header}>{header}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {groupedData.map((row, index) => (
-                                                <tr key={index}>
-                                                    {Object.entries(row).map(([key, value]) => {
-                                                        const isNumeric = isNumericValue(value);
-                                                        return (
-                                                            <td 
-                                                                key={key}
-                                                                className={isNumeric ? 'money' : ''}
-                                                            >
-                                                                {isNumeric ? formatNumber(value) : (value || '-')}
-                                                            </td>
-                                                        );
-                                                    })}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </>
-                        )}
-                    </div>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="name" />
+                            <YAxis />
+                            <Tooltip />
+                            <Legend />
+                            <Line type="monotone" dataKey="pv" stroke="#8884d8" activeDot={{ r: 8 }} />
+                            <Line type="monotone" dataKey="uv" stroke="#82ca9d" />
+                        </LineChart>
+                    </ResponsiveContainer>
                 </div>
             );
         };
+
+        // Render aplikasi
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<TestChart />);
+    </script>
+</body>
+</html>
+=======
+        const TestChart = () => {
+            const data = [
+                { name: 'Page A', uv: 4000, pv: 2400, amt: 2400 },
+                { name: 'Page B', uv: 3000, pv: 1398, amt: 2210 },
+                { name: 'Page C', uv: 2000, pv: 9800, amt: 2290 },
+                { name: 'Page D', uv: 2780, pv: 3908, amt: 2000 },
+                { name: 'Page E', uv: 1890, pv: 4800, amt: 2181 },
+                { name: 'Page F', uv: 2390, pv: 3800, amt: 2500 },
+                { name: 'Page G', uv: 3490, pv: 4300, amt: 2100 },
+            ];
+
+            return (
+                <div style={{ width: '100%', height: 300 }}>
+                    <ResponsiveContainer>
+                        <LineChart
+                            data={data}
+                            margin={{
+                                top: 5,
+                                right: 30,
+                                left: 20,
+                                bottom: 5,
+                            }}
+                        >
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="name" />
+                            <YAxis />
+                            <Tooltip />
+                            <Legend />
+                            <Line type="monotone" dataKey="pv" stroke="#8884d8" activeDot={{ r: 8 }} />
+                            <Line type="monotone" dataKey="uv" stroke="#82ca9d" />
+                        </LineChart>
+                    </ResponsiveContainer>
+>>>>>>> d10db2a (Replace with minimal Recharts test component)
+                </div>
+            );
+        };
+
+        // Render aplikasi
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+<<<<<<< HEAD
+        root.render(<CashflowDashboard />);
+    </script>
+</body>
+</html>
+=======
+        root.render(<TestChart />);
+    </script>
+</body>
+</html>
 
         // Render aplikasi
         const root = ReactDOM.createRoot(document.getElementById('root'));
@@ -924,3 +535,4 @@
     </script>
 </body>
 </html>
+>>>>>>> d10db2a (Replace with minimal Recharts test component)
